@@ -17,7 +17,10 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '20mb' })); // Images ke liye limit badhaya
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
-
+// ========== ROOT ROUTE (To fix "Cannot GET /") ==========
+app.get('/', (req, res) => {
+  res.send('🚀 Project Forge AI Backend is running! Use /api/health to check status.');
+});
 // ========== ENVIRONMENT VARIABLES ==========
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://rfejuvethmxenitvkyjp.supabase.co';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
