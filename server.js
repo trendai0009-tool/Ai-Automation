@@ -15,12 +15,14 @@ app.use(cors({
   methods: ['GET', 'POST', 'DELETE', 'PUT', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
-app.use(express.json({ limit: '20mb' })); // Images ke liye limit badhaya
+app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
-// ========== ROOT ROUTE (To fix "Cannot GET /") ==========
+
+// ========== ROOT ROUTE (Change 1 - Added) ==========
 app.get('/', (req, res) => {
   res.send('🚀 Project Forge AI Backend is running! Use /api/health to check status.');
 });
+
 // ========== ENVIRONMENT VARIABLES ==========
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://rfejuvethmxenitvkyjp.supabase.co';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
@@ -118,13 +120,12 @@ async function canGenerate(supabaseId) {
   return { allowed: true, user };
 }
 
-// ========== GEMINI AI FUNCTION ==========
+// ========== GEMINI AI FUNCTION (Change 3 - Platform-wise output) ==========
 async function generateWithGemini(prompt, platform, images) {
   if (!GEMINI_API_KEY) {
     throw new Error('GEMINI_API_KEY not configured');
   }
 
-  // Platform ke hisaab se system instruction
   const systemInstruction = `Tum Project Forge AI ho — ek expert assistant jo "${platform}" ke liye professional content generate karta hai.
 
 Rules:
@@ -151,10 +152,8 @@ Rules:
 - Output complete aur ready-to-use hona chahiye
 - Agar image upload hai to uska data/content read karke use karo`;
 
-  // Parts build karo
   let parts = [];
 
-  // Images add karo agar hain
   if (images && images.length > 0) {
     images.forEach(function (img) {
       parts.push({
@@ -166,7 +165,6 @@ Rules:
     });
   }
 
-  // Text prompt
   const userText = prompt || (platform + ' ke liye professional content banao.');
   parts.push({ text: userText });
 
@@ -451,7 +449,7 @@ app.delete('/api/history/:supabaseId', async (req, res) => {
   }
 });
 
-// ========== AI GENERATE — GEMINI ==========
+// ========== AI GENERATE — GEMINI (Change 4 - Free/Paid limits) ==========
 app.post('/api/generate', async (req, res) => {
   try {
     const { supabaseId, user_id, prompt, platform, images } = req.body;
@@ -465,7 +463,7 @@ app.post('/api/generate', async (req, res) => {
       return res.status(400).json({ error: 'Platform select karo' });
     }
 
-    // User limit check (agar userId diya hai)
+    // User limit check (Change 4 - Free users: 500/month)
     let user = null;
     if (userId) {
       const { allowed, message, user: u } = await canGenerate(userId);
@@ -477,7 +475,6 @@ app.post('/api/generate', async (req, res) => {
 
     let output = '';
 
-    // Gemini se generate karo
     if (GEMINI_API_KEY) {
       try {
         output = await generateWithGemini(prompt, platform, images);
