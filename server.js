@@ -1092,47 +1092,74 @@ OUTPUT QUALITY RULES:
 }
 
 // ============================================================
-//  HELPER: CHECK & INCREMENT DAILY USAGE
+//  HELPER: CHECK & INCREMENT DAILY USAGE (FIXED - NO ADMIN API)
 // ============================================================
 async function checkAndIncrementUsage(userId) {
-  const { data: userData, error } = await supabase.auth.admin.getUserById(userId);
-  if (error || !userData?.user) throw new Error('User not found');
+  // ✅ SIMPLE FIX: Admin API use mat karo, direct DB se check karo
+  if (!userId || userId.length < 10) {
+    console.warn('Invalid userId:', userId);
+    return { allowed: false, error: 'Invalid user ID' };
+  }
 
-  const meta = userData.user.user_metadata || {};
+  // Pehle user ki metadata DB se lete hain
+  let meta = { plan: 'free' };
+  let userExists = false;
+  
+  try {
+    // Try to get user metadata from a 'user_profiles' table
+    const { data: profileData, error: profileError } = await supabase
+      .from('user_profiles')
+      .select('metadata')
+      .eq('user_id', userId)
+      .single();
+    
+    if (!profileError && profileData) {
+      meta = profileData.metadata || { plan: 'free' };
+      userExists = true;
+    }
+  } catch (e) {
+    console.warn('DB fetch error:', e.message);
+  }
+  
+  // Agar user DB mein nahi hai to create karo
+  if (!userExists) {
+    try {
+      await supabase.from('user_profiles').insert([{
+        user_id: userId,
+        metadata: { plan: 'free', created_at: new Date().toISOString() },
+        created_at: new Date().toISOString()
+      }]);
+      console.log(`✅ Created user profile for: ${userId}`);
+    } catch (e) {
+      console.warn('User create error:', e.message);
+    }
+  }
+
   const plan = meta.plan || 'free';
   const today = new Date().toISOString().split('T')[0];
-
-  // Check 1 Year plan expiry
-  if (plan === 'yearly' && meta.planExpiresAt) {
+  
+  // Check expiry for pro/yearly plans
+  if ((plan === 'pro' || plan === 'yearly') && meta.planExpiresAt) {
     if (new Date(meta.planExpiresAt) < new Date()) {
-      await supabase.auth.admin.updateUserById(userId, {
-        user_metadata: { ...meta, plan: 'free' }
-      }).catch(() => {});
-      // Niche free plan check chalega
+      // Plan expired, reset to free in DB
+      await supabase
+        .from('user_profiles')
+        .update({ metadata: { ...meta, plan: 'free' } })
+        .eq('user_id', userId)
+        .catch(() => {});
+      // Fall through to free plan
     } else {
-      return { allowed: true, plan: 'yearly', remaining: 'unlimited' };
+      return { allowed: true, plan: plan, remaining: 'unlimited' };
     }
   }
-
-  // Check Pro plan (1 Month / 3 Months / 6 Months) expiry
-  if (plan === 'pro' && meta.planExpiresAt) {
-    if (new Date(meta.planExpiresAt) < new Date()) {
-      await supabase.auth.admin.updateUserById(userId, {
-        user_metadata: { ...meta, plan: 'free' }
-      }).catch(() => {});
-      // Niche free plan check chalega
-    } else {
-      return { allowed: true, plan: 'pro', remaining: 'unlimited' };
-    }
-  }
-
+  
   if (plan === 'pro') return { allowed: true, plan: 'pro', remaining: 'unlimited' };
   if (plan === 'yearly') return { allowed: true, plan: 'yearly', remaining: 'unlimited' };
-
-  // Free plan daily check - ONLY 3 per day
+  
+  // Free plan daily check
   const usageKey = `usage_${today}`;
   const used = parseInt(meta[usageKey] || 0);
-
+  
   if (used >= FREE_DAILY_LIMIT) {
     return { 
       allowed: false, 
@@ -1140,15 +1167,24 @@ async function checkAndIncrementUsage(userId) {
       remaining: 0, 
       used, 
       limit: FREE_DAILY_LIMIT,
-      message: `You have reached your daily limit of ${FREE_DAILY_LIMIT} free generations. Please upgrade to Pro plan for unlimited access.`
+      message: `Daily limit of ${FREE_DAILY_LIMIT} free generations reached. Please upgrade to Pro.`
     };
   }
-
-  await supabase.auth.admin.updateUserById(userId, {
-    user_metadata: { ...meta, [usageKey]: used + 1 }
-  });
-
-  return { allowed: true, plan: 'free', remaining: FREE_DAILY_LIMIT - used - 1, used: used + 1 };
+  
+  // Update usage in DB
+  const newMeta = { ...meta, [usageKey]: used + 1 };
+  await supabase
+    .from('user_profiles')
+    .upsert({ user_id: userId, metadata: newMeta, updated_at: new Date().toISOString() })
+    .catch(e => console.warn('Usage update error:', e.message));
+  
+  return { 
+    allowed: true, 
+    plan: 'free', 
+    remaining: FREE_DAILY_LIMIT - used - 1, 
+    used: used + 1,
+    message: `${FREE_DAILY_LIMIT - used - 1} generations remaining today`
+  };
 }
 
 // ============================================================
